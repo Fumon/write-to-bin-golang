@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
-	"strconv"
+//	"strconv"
 	"os"
-	"os/exec"
+//	"os/exec"
+	"syscall"
 	"path/filepath"
 	"io"
 	"io/ioutil"
@@ -35,25 +36,13 @@ func main() {
 
 		// Die as quickly as possible.
 		os.Exit(0)
-	} else if os.Args[1] != "run" {
+	} else if os.Args[0] != "run" {
 		// Run flag parsing
 	}
 
 	// We are the temporary file and must now proceed to open the original.
-	inb, err := strconv.ParseInt(os.Args[1], 10, 0)
-	if err != nil {
-		panic("Cannot parse pid of starter")
-	}
-	pid_of_starter := int(inb)
-	orig_path := os.Args[2]
-
-	// Wait on the original thread to stop so we can open the file.
-	starter_process, err := os.FindProcess(pid_of_starter)
-	if err != nil {
-		// TODO: Handle case where process is still alive.
-	} else {
-		starter_process.Wait()
-	}
+	fmt.Println("Args: ", os.Args)
+	orig_path := os.Args[1]
 	
 
 	// Now open ourselves
@@ -71,7 +60,6 @@ func main() {
 	} else {
 		fmt.Println("original is magificated")
 	}
-
 }
 
 // Gets absolute path to the executable so long as the working directory hasn't changed
@@ -85,7 +73,6 @@ func GetAbsPath() (estpath string){
 	}
 	return
 }
-
 
 // Copies the binary to temp and runs from there, modifying the original file.
 func subvert_the_pager(f *os.File) {
@@ -105,6 +92,7 @@ func subvert_the_pager(f *os.File) {
 
 	// Now copy the binary into the temporary file.
 	f.Seek(0, os.SEEK_SET)
+	fmt.Println("Attempting copy of ", Bin_last_byte, " bytes")
 	_, err = io.CopyN(tmpfile, f, Bin_last_byte)
 	if err != nil {
 		panic(fmt.Sprintln("Problem while copying binary:\n\t", err))
@@ -118,14 +106,7 @@ func subvert_the_pager(f *os.File) {
 	// Sync and then close the temp file..
 	tmpfile.Sync()
 	tmpfile.Close()
-
-	// Now launch the program with the path to the original file.
-	pid := string(os.Getpid())
-
-	cmd := exec.Command(tmpname, pid, f.Name())
-	// Try to bind stdout
-	cmd.Stdout = os.Stdout
-	cmd.Start() // Don't wait
+	syscall.Exec(tmpname, []string{"run", f.Name()}, os.Environ())
 }
 
 type FuuFoot struct {
@@ -134,12 +115,11 @@ type FuuFoot struct {
 	// Version byte
 	Version byte
 	// Magicbytes
-	magic [4]byte
+	Magic [4]byte
 }
 
 // Constant
 var FuuFootSize = unsafe.Sizeof(FuuFoot{})
-
 
 // Generate a FuuFoot version one from the info in FuuFile
 func GenFuuFoot1(file *FuuFile) *FuuFoot {
@@ -151,7 +131,7 @@ func (rec *FuuFoot) Output() (b []byte, err error) {
 	var data = []interface{}{
 		rec.Bin_end,
 		rec.Version,
-		rec.magic,
+		rec.Magic,
 	}
 	for _, v := range data {
 		err = binary.Write(outbuff, binary.LittleEndian, v)
@@ -202,6 +182,7 @@ func (rec *FuuFile) ReFoot() (err error) {
 		}()
 	}
 
+	fmt.Println("Footbytes = \n\t", footbytes)
 	_, err = rec.Write(footbytes)
 	if err != nil {
 		return
@@ -239,8 +220,10 @@ func FindLastBinByte(f *os.File) (int64, error) {
 	// We have a FuuFile, parse the footer.
 	footer := &FuuFoot{}
 
-	f.Seek(-1 * int64(FuuFootSize), os.SEEK_END)
+	f.Seek(-13, os.SEEK_END)
 	err := binary.Read(f, binary.LittleEndian, footer)
+	footbytes, _ := footer.Output()
+	fmt.Println("Found footer. footbytes=\n\t", footbytes)
 	if err != nil {
 		panic("Error reading footer")
 	}
@@ -251,14 +234,14 @@ func FindLastBinByte(f *os.File) (int64, error) {
 // Takes a regular file and makes a FuuFile
 func Magificate(this_file *os.File) (f *FuuFile, err error) {
 	// Get the size of the file at seek -1 (skip back from the null bit)
-	end_file_offset, err := this_file.Seek(0, 2)
+	end_file_offset, err := this_file.Seek(0, os.SEEK_END)
 	if err != nil {
 		panic("Problem seeking to end of file")
 	}
 
 	// Initialize the struct
 	f = &FuuFile{this_file, false, end_file_offset, end_file_offset, end_file_offset}
-
+	fmt.Println("Writing a footer with ", end_file_offset, " end file offset")
 	if err := f.ReFoot(); err != nil {
 		panic("Issues writing to file")
 	}
